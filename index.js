@@ -8,6 +8,8 @@ const {
 } = require("@discordjs/voice");
 const path = require("path");
 
+const AUTHORIZED_ID = "566510674424102922";
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -25,8 +27,15 @@ client.once("ready", () => {
 
 client.on("messageCreate", async (message) => {
   if (message.content !== "!glxmus2") return;
-  if (!message.member.voice.channel)
+
+  // 🔒 Vérification de l'ID autorisé
+  if (message.author.id !== AUTHORIZED_ID) {
+    return message.reply("❌ Tu n’es pas autorisé à utiliser cette commande.");
+  }
+
+  if (!message.member.voice.channel) {
     return message.reply("❌ Tu dois être dans un salon vocal.");
+  }
 
   const connection = joinVoiceChannel({
     channelId: message.member.voice.channel.id,
@@ -53,3 +62,5 @@ player.on(AudioPlayerStatus.Idle, () => {
 });
 
 client.login(process.env.TOKEN);
+
+
