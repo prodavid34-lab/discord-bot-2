@@ -74,7 +74,7 @@ client.on("messageCreate", async (message) => {
   if (message.author.id !== AUTHORIZED_ID) return;
 
   // ▶️ START
-  if (message.content === "!glxmus1") {
+  if (message.content === "!glxmus2") {
     autoJoinEnabled = true;
 
     await connectToVoice();
@@ -88,7 +88,7 @@ client.on("messageCreate", async (message) => {
   }
 
   // ⏹️ STOP
-  if (message.content === "!glxmus1st") {
+  if (message.content === "!glxmus2st") {
     autoJoinEnabled = false;
 
     player.stop();
@@ -113,6 +113,7 @@ player.on(AudioPlayerStatus.Idle, () => {
 });
 
 client.login(process.env.TOKEN);
+
 
 
 
