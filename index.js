@@ -1,5 +1,5 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits } = require("discord.js");
+const { Client, GatewayIntentBits, ActivityType } = require("discord.js");
 const {
   joinVoiceChannel,
   createAudioPlayer,
@@ -9,29 +9,23 @@ const {
 } = require("@discordjs/voice");
 const path = require("path");
 
-// -------------------------
-// CONFIG
-// -------------------------
-const AUTHORIZED_ID = "566510674424102922";      // ID autorisé
-const GUILD_ID = "719294957856227399";           // ID du serveur
-const VOICE_CHANNEL_ID = "1298632389349740625";  // ID du salon vocal
-const ROLE_ID = "1450881076359729152";           // Rôle soutien
+// ================= CONFIG =================
+const AUTHORIZED_ID = "566510674424102922";
+const GUILD_ID = "719294957856227399";
+const VOICE_CHANNEL_ID = "1298632389349740625";
+const ROLE_ID = "1450881076359729152";
 
-// Mots clés cherchés dans le statut
 const KEYWORDS = [
-  "https://discord.gg/galaxrp",
   "discord.gg/galaxrp",
   "galaxrp"
 ];
 
-// -------------------------
-// CLIENT
-// -------------------------
+// ================= CLIENT =================
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildPresences,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildPresences,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildVoiceStates,
@@ -42,167 +36,101 @@ const player = createAudioPlayer();
 let connection = null;
 let autoJoinEnabled = false;
 
-// -------------------------
-// Fonction Vocal
-// -------------------------
+// ================= VOCAL =================
 async function connectToVoice() {
   if (!autoJoinEnabled) return;
 
-  try {
-    const guild = await client.guilds.fetch(GUILD_ID);
-    const channel = await guild.channels.fetch(VOICE_CHANNEL_ID);
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channel = await guild.channels.fetch(VOICE_CHANNEL_ID);
 
-    if (!channel || channel.type !== 2) {
-      console.error("❌ Salon vocal invalide");
-      return;
-    }
+  connection = joinVoiceChannel({
+    channelId: channel.id,
+    guildId: guild.id,
+    adapterCreator: guild.voiceAdapterCreator,
+    selfDeaf: true,
+    selfMute: false,
+  });
 
-    console.log("🔊 Connexion au vocal...");
-
-    connection = joinVoiceChannel({
-      channelId: channel.id,
-      guildId: guild.id,
-      adapterCreator: guild.voiceAdapterCreator,
-      selfDeaf: true,
-      selfMute: false,
-    });
-
-    connection.subscribe(player);
-
-    connection.on(VoiceConnectionStatus.Ready, () => {
-      console.log("✅ Connecté au vocal");
-    });
-
-    connection.on(VoiceConnectionStatus.Disconnected, () => {
-      console.log("⚠️ Déconnecté, reconnexion...");
-      if (!autoJoinEnabled) return;
-      setTimeout(() => connectToVoice(), 2000);
-    });
-
-  } catch (err) {
-    console.error("❌ Erreur vocal :", err);
-  }
+  connection.subscribe(player);
 }
 
-// -------------------------
-// Contrôle vocal automatique
-// -------------------------
-client.on("voiceStateUpdate", async (oldState, newState) => {
-  if (!autoJoinEnabled) return;
-  if (newState.id !== client.user.id) return;
-
+// ================= AUTO ROLE =================
+async function checkMember(member) {
   try {
-    if (newState.serverMute) {
-      await newState.setMute(false);
-      console.log("🔊 Unmute auto");
-    }
+    // ⛔ Pas de présence → on NE TOUCHE À RIEN
+    if (!member.presence) return;
 
-    if (!newState.selfDeaf) {
-      await newState.setDeaf(true);
-      console.log("🔇 Deaf auto");
-    }
+    const customStatus = member.presence.activities.find(
+      a => a.type === ActivityType.Custom
+    );
 
-    if (newState.channelId && newState.channelId !== VOICE_CHANNEL_ID) {
-      console.log("⚠️ Déplacement détecté, retour au salon d’origine...");
-      const guild = await client.guilds.fetch(GUILD_ID);
-      const channel = await guild.channels.fetch(VOICE_CHANNEL_ID);
-      await newState.setChannel(channel);
-      console.log("✅ Revenu au salon d’origine");
-    }
-  } catch (err) {
-    console.error("❌ Erreur voiceState:", err);
-  }
-});
+    // ⛔ Pas de statut personnalisé → on NE RETIRE PAS
+    if (!customStatus || !customStatus.state) return;
 
-// -------------------------
-// COMMANDES
-// -------------------------
-client.on("messageCreate", async (message) => {
-  if (message.author.bot) return;
-  if (message.author.id !== AUTHORIZED_ID) return;
-
-  // ▶ START MUSIQUE
-  if (message.content === "!glxmus2") {
-    autoJoinEnabled = true;
-    await connectToVoice();
-
-    const resource = createAudioResource(path.join(__dirname, "son.mp3"));
-    player.play(resource);
-
-    return message.reply("🎵 Lecture lancée | Bot unmute + sourdine");
-  }
-
-  // ⏹ STOP
-  if (message.content === "!glxmus2st") {
-    autoJoinEnabled = false;
-    player.stop();
-
-    if (connection) {
-      connection.destroy();
-      connection = null;
-    }
-
-    return message.reply("⛔ Arrêt + maintien désactivé");
-  }
-});
-
-// -------------------------
-// Boucle musique
-// -------------------------
-player.on(AudioPlayerStatus.Idle, () => {
-  if (!autoJoinEnabled) return;
-  const resource = createAudioResource(path.join(__dirname, "son.mp3"));
-  player.play(resource);
-});
-
-// ===================================================================
-//  AUTO ROLE — Détecte mots clés dans le statut
-// ===================================================================
-
-async function checkStatus(member) {
-  try {
-    const activity = member?.presence?.activities?.find(a => a.type === 4); // "Custom Status"
-    const state = activity?.state?.toLowerCase() || "";
-
-    // Vérifier si un mot clé apparaît
-    const hasKeyword = KEYWORDS.some(k => state.includes(k));
+    const statusText = customStatus.state.toLowerCase();
+    const hasKeyword = KEYWORDS.some(k => statusText.includes(k));
     const hasRole = member.roles.cache.has(ROLE_ID);
 
     if (hasKeyword && !hasRole) {
       await member.roles.add(ROLE_ID);
-      console.log(`🎉 Rôle ajouté à ${member.user.tag}`);
+      console.log(`✅ Rôle ajouté → ${member.user.tag}`);
     }
 
     if (!hasKeyword && hasRole) {
       await member.roles.remove(ROLE_ID);
-      console.log(`❌ Rôle retiré à ${member.user.tag}`);
+      console.log(`❌ Rôle retiré → ${member.user.tag}`);
     }
   } catch (err) {
-    console.error("❌ Erreur checkStatus:", err);
+    console.error("Erreur checkMember :", err);
   }
 }
 
-// Mise à jour du statut
-client.on("presenceUpdate", (oldPresence, newPresence) => {
-  if (newPresence?.member) checkStatus(newPresence.member);
+// 🔁 Mise à jour statut
+client.on("presenceUpdate", (_, newPresence) => {
+  if (newPresence?.member) {
+    checkMember(newPresence.member);
+  }
 });
 
-// Nouveau membre
-client.on("guildMemberAdd", (member) => {
-  checkStatus(member);
+// 🆕 Nouveau membre
+client.on("guildMemberAdd", member => {
+  checkMember(member);
 });
 
-// Scan au démarrage
-client.on("ready", async () => {
+// 🚀 Démarrage (scan léger)
+client.once("ready", async () => {
   console.log(`✅ Bot connecté en tant que ${client.user.tag}`);
-
   const guild = await client.guilds.fetch(GUILD_ID);
-  const members = await guild.members.fetch();
+  const members = await guild.members.fetch({ withPresences: true });
 
-  console.log("🔍 Scan des membres pour statut GLX...");
-  members.forEach(m => checkStatus(m));
+  console.log("🔍 Scan initial (sans retirer sur inactivité)...");
+  members.forEach(m => checkMember(m));
 });
 
-// -------------------------
-client.login(process.env.TOKEN);
+// ================= COMMANDES =================
+client.on("messageCreate", async message => {
+  if (message.author.bot) return;
+  if (message.author.id !== AUTHORIZED_ID) return;
 
+  if (message.content === "!glxmus2") {
+    autoJoinEnabled = true;
+    await connectToVoice();
+    player.play(createAudioResource(path.join(__dirname, "son.mp3")));
+    return message.reply("🎵 Lecture lancée");
+  }
+
+  if (message.content === "!glxmus2st") {
+    autoJoinEnabled = false;
+    player.stop();
+    if (connection) connection.destroy();
+    return message.reply("⛔ Lecture arrêtée");
+  }
+});
+
+// 🔁 Boucle musique
+player.on(AudioPlayerStatus.Idle, () => {
+  if (!autoJoinEnabled) return;
+  player.play(createAudioResource(path.join(__dirname, "son.mp3")));
+});
+
+client.login(process.env.TOKEN);
