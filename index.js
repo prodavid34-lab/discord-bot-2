@@ -34,36 +34,59 @@ async function connectToVoice() {
     const channel = await guild.channels.fetch(VOICE_CHANNEL_ID);
 
     if (!channel || channel.type !== 2) {
-      console.error("❌ Salon vocal introuvable ou invalide");
+      console.error("❌ Salon vocal invalide");
       return;
     }
 
-    console.log("🔊 Tentative de connexion au vocal...");
+    console.log("🔊 Connexion au vocal...");
 
     connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: guild.id,
       adapterCreator: guild.voiceAdapterCreator,
-      selfDeaf: false,
+      selfDeaf: true,   // 🔇 Bot sourdine
+      selfMute: false,  // 🔊 Bot toujours unmute
     });
 
     connection.subscribe(player);
 
     connection.on(VoiceConnectionStatus.Ready, () => {
-      console.log("✅ Connecté au vocal !");
+      console.log("✅ Connecté au vocal (unmute + deaf)");
     });
 
     connection.on(VoiceConnectionStatus.Disconnected, () => {
-      console.log("⚠️ Déconnecté du vocal, reconnexion...");
+      console.log("⚠️ Déconnecté, reconnexion...");
       if (!autoJoinEnabled) return;
-
       setTimeout(() => connectToVoice(), 2000);
     });
 
   } catch (err) {
-    console.error("❌ Erreur connexion vocal :", err);
+    console.error("❌ Erreur vocal :", err);
   }
 }
+
+// 🔄 Vérification constante des changements de voix
+client.on("voiceStateUpdate", async (oldState, newState) => {
+  if (!autoJoinEnabled) return;
+  if (newState.id !== client.user.id) return;
+
+  try {
+    // Si le bot est server-muted → se server-unmute
+    if (newState.serverMute) {
+      await newState.setMute(false); // se server-unmute
+      console.log("🔊 Server-unmute appliqué automatiquement");
+    }
+
+    // Toujours sourdine
+    if (!newState.selfDeaf) {
+      await newState.setDeaf(true);
+      console.log("🔇 Deaf remise automatiquement");
+    }
+
+  } catch (err) {
+    console.error("❌ Impossible d'appliquer mute/deaf :", err);
+  }
+});
 
 client.once("ready", () => {
   console.log(`✅ Bot connecté en tant que ${client.user.tag}`);
@@ -84,7 +107,7 @@ client.on("messageCreate", async (message) => {
     );
     player.play(resource);
 
-    return message.reply("🎵 Lecture lancée + connexion automatique activée.");
+    return message.reply("🎵 Lecture lancée | Bot toujours unmute + sourdine");
   }
 
   // ⏹️ STOP
@@ -98,7 +121,7 @@ client.on("messageCreate", async (message) => {
       connection = null;
     }
 
-    return message.reply("⛔ Lecture arrêtée et reconnexion désactivée.");
+    return message.reply("⛔ Arrêt + reconnexion désactivée.");
   }
 });
 
