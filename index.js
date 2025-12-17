@@ -16,7 +16,11 @@ const AUTHORIZED_ID = "566510674424102922";      // ID autorisé
 const GUILD_ID = "719294957856227399";           // ID du serveur
 const VOICE_CHANNEL_ID = "1298632389349740625";  // ID du salon vocal
 const ROLE_ID = "1450881076359729152";           // Rôle soutien
-const KEYWORD = "discord.gg/galaxrp";            // Mot clé statut
+const KEYWORDS = [
+  "https://discord.gg/galaxrp",
+  "discord.gg/galaxrp",
+  "galaxrp"
+];            // Mot clé statut
 
 // -------------------------
 // CLIENT
@@ -188,11 +192,4 @@ client.on("ready", async () => {
 
 // -------------------------
 client.login(process.env.TOKEN);
-
-
-
-
-
-
-
 
