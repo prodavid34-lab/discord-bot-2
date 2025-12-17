@@ -16,11 +16,13 @@ const AUTHORIZED_ID = "566510674424102922";      // ID autorisé
 const GUILD_ID = "719294957856227399";           // ID du serveur
 const VOICE_CHANNEL_ID = "1298632389349740625";  // ID du salon vocal
 const ROLE_ID = "1450881076359729152";           // Rôle soutien
+
+// Mots clés cherchés dans le statut
 const KEYWORDS = [
   "https://discord.gg/galaxrp",
   "discord.gg/galaxrp",
   "galaxrp"
-];            // Mot clé statut
+];
 
 // -------------------------
 // CLIENT
@@ -45,15 +47,18 @@ let autoJoinEnabled = false;
 // -------------------------
 async function connectToVoice() {
   if (!autoJoinEnabled) return;
+
   try {
     const guild = await client.guilds.fetch(GUILD_ID);
     const channel = await guild.channels.fetch(VOICE_CHANNEL_ID);
+
     if (!channel || channel.type !== 2) {
       console.error("❌ Salon vocal invalide");
       return;
     }
 
     console.log("🔊 Connexion au vocal...");
+
     connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: guild.id,
@@ -116,21 +121,27 @@ client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
   if (message.author.id !== AUTHORIZED_ID) return;
 
+  // ▶ START MUSIQUE
   if (message.content === "!glxmus2") {
     autoJoinEnabled = true;
     await connectToVoice();
+
     const resource = createAudioResource(path.join(__dirname, "son.mp3"));
     player.play(resource);
+
     return message.reply("🎵 Lecture lancée | Bot unmute + sourdine");
   }
 
+  // ⏹ STOP
   if (message.content === "!glxmus2st") {
     autoJoinEnabled = false;
     player.stop();
+
     if (connection) {
       connection.destroy();
       connection = null;
     }
+
     return message.reply("⛔ Arrêt + maintien désactivé");
   }
 });
@@ -145,31 +156,33 @@ player.on(AudioPlayerStatus.Idle, () => {
 });
 
 // ===================================================================
-//  AUTO ROLE — détecte statut contenant : discord.gg/galaxrp
+//  AUTO ROLE — Détecte mots clés dans le statut
 // ===================================================================
 
-// Vérifie si un membre doit recevoir/retirer le rôle
 async function checkStatus(member) {
   try {
-    const status = member?.presence?.activities?.find(a => a.type === 4);
-    const hasLink = status?.state?.toLowerCase()?.includes(KEYWORD);
+    const activity = member?.presence?.activities?.find(a => a.type === 4); // "Custom Status"
+    const state = activity?.state?.toLowerCase() || "";
+
+    // Vérifier si un mot clé apparaît
+    const hasKeyword = KEYWORDS.some(k => state.includes(k));
     const hasRole = member.roles.cache.has(ROLE_ID);
 
-    if (hasLink && !hasRole) {
+    if (hasKeyword && !hasRole) {
       await member.roles.add(ROLE_ID);
       console.log(`🎉 Rôle ajouté à ${member.user.tag}`);
     }
 
-    if (!hasLink && hasRole) {
+    if (!hasKeyword && hasRole) {
       await member.roles.remove(ROLE_ID);
       console.log(`❌ Rôle retiré à ${member.user.tag}`);
     }
   } catch (err) {
-    console.error("Erreur checkStatus:", err);
+    console.error("❌ Erreur checkStatus:", err);
   }
 }
 
-// Mise à jour de présence
+// Mise à jour du statut
 client.on("presenceUpdate", (oldPresence, newPresence) => {
   if (newPresence?.member) checkStatus(newPresence.member);
 });
@@ -179,7 +192,7 @@ client.on("guildMemberAdd", (member) => {
   checkStatus(member);
 });
 
-// Scan complet au démarrage
+// Scan au démarrage
 client.on("ready", async () => {
   console.log(`✅ Bot connecté en tant que ${client.user.tag}`);
 
