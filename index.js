@@ -1,5 +1,9 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits, ActivityType } = require("discord.js");
+const { 
+  Client, 
+  GatewayIntentBits, 
+  ActivityType 
+} = require("discord.js");
 const {
   joinVoiceChannel,
   createAudioPlayer,
@@ -13,7 +17,7 @@ const path = require("path");
 const AUTHORIZED_ID = "566510674424102922";
 const GUILD_ID = "719294957856227399";
 const VOICE_CHANNEL_ID = "1298632389349740625";
-const ROLE_ID = "1450881076359729152";
+const ROLE_ID = "1450881076359729152"; // rôle soutien
 
 const KEYWORDS = [
   "discord.gg/galaxrp",
@@ -42,6 +46,7 @@ async function connectToVoice() {
 
   const guild = await client.guilds.fetch(GUILD_ID);
   const channel = await guild.channels.fetch(VOICE_CHANNEL_ID);
+  if (!channel || channel.type !== 2) return;
 
   connection = joinVoiceChannel({
     channelId: channel.id,
@@ -54,21 +59,32 @@ async function connectToVoice() {
   connection.subscribe(player);
 }
 
+// maintien vocal
+client.on("voiceStateUpdate", async (_, newState) => {
+  if (!autoJoinEnabled) return;
+  if (newState.id !== client.user.id) return;
+
+  try {
+    if (newState.serverMute) await newState.setMute(false);
+    if (!newState.selfDeaf) await newState.setDeaf(true);
+  } catch {}
+});
+
 // ================= AUTO ROLE =================
 async function checkMember(member) {
   try {
-    // ⛔ Pas de présence → on NE TOUCHE À RIEN
+    // ⛔ Hors ligne / inactif → ON NE FAIT RIEN
     if (!member.presence) return;
 
     const customStatus = member.presence.activities.find(
       a => a.type === ActivityType.Custom
     );
 
-    // ⛔ Pas de statut personnalisé → on NE RETIRE PAS
+    // ⛔ Pas de statut → on NE RETIRE PAS
     if (!customStatus || !customStatus.state) return;
 
-    const statusText = customStatus.state.toLowerCase();
-    const hasKeyword = KEYWORDS.some(k => statusText.includes(k));
+    const text = customStatus.state.toLowerCase();
+    const hasKeyword = KEYWORDS.some(k => text.includes(k));
     const hasRole = member.roles.cache.has(ROLE_ID);
 
     if (hasKeyword && !hasRole) {
@@ -81,29 +97,27 @@ async function checkMember(member) {
       console.log(`❌ Rôle retiré → ${member.user.tag}`);
     }
   } catch (err) {
-    console.error("Erreur checkMember :", err);
+    console.error("AutoRole error:", err);
   }
 }
 
-// 🔁 Mise à jour statut
+// changement de statut
 client.on("presenceUpdate", (_, newPresence) => {
-  if (newPresence?.member) {
-    checkMember(newPresence.member);
-  }
+  if (newPresence?.member) checkMember(newPresence.member);
 });
 
-// 🆕 Nouveau membre
+// nouveau membre
 client.on("guildMemberAdd", member => {
   checkMember(member);
 });
 
-// 🚀 Démarrage (scan léger)
+// scan au démarrage (safe pour 15k)
 client.once("ready", async () => {
   console.log(`✅ Bot connecté en tant que ${client.user.tag}`);
   const guild = await client.guilds.fetch(GUILD_ID);
   const members = await guild.members.fetch({ withPresences: true });
 
-  console.log("🔍 Scan initial (sans retirer sur inactivité)...");
+  console.log("🔍 Scan initial des statuts...");
   members.forEach(m => checkMember(m));
 });
 
@@ -127,7 +141,7 @@ client.on("messageCreate", async message => {
   }
 });
 
-// 🔁 Boucle musique
+// boucle audio
 player.on(AudioPlayerStatus.Idle, () => {
   if (!autoJoinEnabled) return;
   player.play(createAudioResource(path.join(__dirname, "son.mp3")));
