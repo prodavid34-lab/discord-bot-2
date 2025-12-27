@@ -19,7 +19,6 @@ const AUTHORIZED_IDS = [
   "836677770373103636",
   "1331647713149714513"
 ];
-
 const GUILD_ID = "719294957856227399";
 const VOICE_CHANNEL_ID = "1298632389349740625";
 const ROLE_ID = "1450881076359729152";
@@ -51,6 +50,7 @@ let autoJoinEnabled = false;
 // ================= VOCAL =================
 async function connectToVoice() {
   if (!autoJoinEnabled) return;
+
   const guild = await client.guilds.fetch(GUILD_ID);
   const channel = await guild.channels.fetch(VOICE_CHANNEL_ID);
 
@@ -78,6 +78,7 @@ async function checkMember(member) {
 
   try {
     if (!member.presence) return;
+
     const customStatus = member.presence.activities.find(a => a.type === ActivityType.Custom);
     if (!customStatus || !customStatus.state) return;
 
@@ -88,13 +89,25 @@ async function checkMember(member) {
     const hasRole = member.roles.cache.has(ROLE_ID);
 
     if (hasKeyword && !hasRole) {
-      await member.roles.add(ROLE_ID);
-      console.log(`➕ Ajout du rôle → ${member.user.tag}`);
+      try {
+        await member.roles.add(ROLE_ID);
+        console.log(`➕ Ajout du rôle → ${member.user.tag}`);
+      } catch (err) {
+        console.error(
+          `❌ ERREUR en ajoutant un rôle à ${member.user.tag} (${member.id}) : ${err.message}`
+        );
+      }
     }
 
     if (!hasKeyword && hasRole) {
-      await member.roles.remove(ROLE_ID);
-      console.log(`➖ Retrait du rôle → ${member.user.tag}`);
+      try {
+        await member.roles.remove(ROLE_ID);
+        console.log(`➖ Retrait du rôle → ${member.user.tag}`);
+      } catch (err) {
+        console.error(
+          `❌ ERREUR en retirant un rôle à ${member.user.tag} (${member.id}) : ${err.message}`
+        );
+      }
     }
 
   } catch (err) {
@@ -102,12 +115,11 @@ async function checkMember(member) {
   }
 }
 
-// présence
+// ================= EVENTS =================
 client.on("presenceUpdate", (_, newPresence) => {
   if (newPresence?.member) checkMember(newPresence.member);
 });
 
-// nouveau membre
 client.on("guildMemberAdd", member => {
   checkMember(member);
 });
@@ -115,10 +127,12 @@ client.on("guildMemberAdd", member => {
 // ================= SCAN AUTO =================
 async function fullScan() {
   console.log("🔍 Scan complet démarré...");
+
   const guild = await client.guilds.fetch(GUILD_ID);
   const members = await guild.members.fetch({ withPresences: true });
 
   let count = 0;
+
   for (const member of members.values()) {
     await checkMember(member);
     count++;
@@ -130,7 +144,6 @@ async function fullScan() {
 
 function startInterval() {
   if (intervalHandler) clearInterval(intervalHandler);
-
   intervalHandler = setInterval(() => {
     if (autoRoleEnabled) fullScan();
   }, autoScanInterval);
@@ -140,9 +153,7 @@ function startInterval() {
 client.on("messageCreate", async message => {
   if (message.author.bot) return;
 
-  // FIX ✔️ Utilisation du tableau AUTHORIZED_IDS
   if (!AUTHORIZED_IDS.includes(message.author.id)) return;
-
   if (!message.content.startsWith(PREFIX)) return;
 
   const args = message.content.slice(PREFIX.length).trim().split(" ");
@@ -202,11 +213,9 @@ client.on("messageCreate", async message => {
   if (cmd === "scaninterval") {
     const min = parseInt(args[0]);
     if (isNaN(min) || min < 1) return message.reply("❌ Mets un nombre en minutes.");
-
     autoScanIntervalMinutes = min;
     autoScanInterval = min * 60000;
     startInterval();
-
     return message.reply(`⏱️ Nouvel intervalle : **${min} min**`);
   }
 
@@ -249,4 +258,3 @@ client.once("ready", async () => {
 });
 
 client.login(process.env.TOKEN);
-
