@@ -19,15 +19,18 @@ const AUTHORIZED_IDS = [
   "836677770373103636",
   "1331647713149714513"
 ];
+
 const GUILD_ID = "719294957856227399";
 const VOICE_CHANNEL_ID = "1298632389349740625";
 const ROLE_ID = "1450881076359729152";
+
 const KEYWORDS = ["discord.gg/galaxrp", "galaxrp"];
 const PREFIX = "!glx";
 
 let autoRoleEnabled = true;
 let autoScanIntervalMinutes = 10;
 let autoScanInterval = autoScanIntervalMinutes * 60 * 1000;
+
 let lastStatuses = new Map();
 let intervalHandler = null;
 
@@ -77,35 +80,39 @@ async function checkMember(member) {
   if (!autoRoleEnabled) return;
 
   try {
-    if (!member.presence) return;
+    // --- Vérif statut ---
+    let text = null;
 
-    const customStatus = member.presence.activities.find(a => a.type === ActivityType.Custom);
-    if (!customStatus || !customStatus.state) return;
+    if (member.presence) {
+      const customStatus = member.presence.activities.find(a => a.type === ActivityType.Custom);
+      if (customStatus?.state) text = customStatus.state.toLowerCase();
+    }
 
-    const text = customStatus.state.toLowerCase();
     lastStatuses.set(member.id, text);
 
-    const hasKeyword = KEYWORDS.some(k => text.includes(k));
+    const hasKeyword = text ? KEYWORDS.some(k => text.includes(k)) : false;
     const hasRole = member.roles.cache.has(ROLE_ID);
 
+    // --- AJOUT ROLE ---
     if (hasKeyword && !hasRole) {
       try {
         await member.roles.add(ROLE_ID);
         console.log(`➕ Ajout du rôle → ${member.user.tag}`);
       } catch (err) {
         console.error(
-          `❌ ERREUR en ajoutant un rôle à ${member.user.tag} (${member.id}) : ${err.message}`
+          `❌ ERREUR ajout rôle à ${member.user.tag} (${member.id}) : ${err.message}`
         );
       }
     }
 
+    // --- RETRAIT ROLE ---
     if (!hasKeyword && hasRole) {
       try {
         await member.roles.remove(ROLE_ID);
         console.log(`➖ Retrait du rôle → ${member.user.tag}`);
       } catch (err) {
         console.error(
-          `❌ ERREUR en retirant un rôle à ${member.user.tag} (${member.id}) : ${err.message}`
+          `❌ ERREUR retrait rôle à ${member.user.tag} (${member.id}) : ${err.message}`
         );
       }
     }
@@ -115,30 +122,61 @@ async function checkMember(member) {
   }
 }
 
+// ================= CORRECTIF : scan forcé des membres ayant le rôle =================
+async function fixWrongRoles() {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const members = await guild.members.fetch({ withPresences: true });
+
+  for (const member of members.values()) {
+    const hasRole = member.roles.cache.has(ROLE_ID);
+
+    if (!hasRole) continue;
+
+    let text = null;
+
+    if (member.presence) {
+      const custom = member.presence.activities.find(a => a.type === ActivityType.Custom);
+      if (custom?.state) text = custom.state.toLowerCase();
+    }
+
+    const hasKeyword = text ? KEYWORDS.some(k => text.includes(k)) : false;
+
+    // ROLE PRÉSENT + STATUT ABSENT => RETRAIT
+    if (!hasKeyword) {
+      try {
+        await member.roles.remove(ROLE_ID);
+        console.log(`🛠 Correction : retrait du rôle à ${member.user.tag}`);
+      } catch (err) {
+        console.error(
+          `❌ ERREUR correction rôle → ${member.user.tag} (${member.id}) : ${err.message}`
+        );
+      }
+    }
+  }
+}
+
 // ================= EVENTS =================
 client.on("presenceUpdate", (_, newPresence) => {
   if (newPresence?.member) checkMember(newPresence.member);
 });
 
-client.on("guildMemberAdd", member => {
-  checkMember(member);
-});
+client.on("guildMemberAdd", member => checkMember(member));
 
 // ================= SCAN AUTO =================
 async function fullScan() {
-  console.log("🔍 Scan complet démarré...");
-
+  console.log("🔍 Scan complet...");
   const guild = await client.guilds.fetch(GUILD_ID);
   const members = await guild.members.fetch({ withPresences: true });
 
   let count = 0;
-
   for (const member of members.values()) {
     await checkMember(member);
     count++;
   }
 
-  console.log(`✅ Scan terminé (${count} membres analysés)`);
+  console.log(`✅ Scan terminé (${count} membres)`);
+  await fixWrongRoles(); // correction automatique
+
   return count;
 }
 
@@ -152,7 +190,6 @@ function startInterval() {
 // ================= COMMANDES =================
 client.on("messageCreate", async message => {
   if (message.author.bot) return;
-
   if (!AUTHORIZED_IDS.includes(message.author.id)) return;
   if (!message.content.startsWith(PREFIX)) return;
 
@@ -161,7 +198,7 @@ client.on("messageCreate", async message => {
 
   if (cmd === "help") {
     return message.reply(
-      "**📘 Commandes disponibles :**\n" +
+      "**📘 Commandes :**\n" +
       "`!glxhelp`\n" +
       "`!glxscan`\n" +
       "`!glxforcerole @user`\n" +
