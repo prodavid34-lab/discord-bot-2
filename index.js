@@ -2,7 +2,8 @@ require("dotenv").config();
 const {
   Client,
   GatewayIntentBits,
-  ActivityType
+  ActivityType,
+  ChannelType
 } = require("discord.js");
 const {
   joinVoiceChannel,
@@ -14,19 +15,22 @@ const path = require("path");
 
 // ================= CONFIG =================
 const AUTHORIZED_IDS = [
-  "566510674424102922", // ton ID actuel
-  "836677770373103636", //TEN
-  "1331647713149714513" // Antoine
+  "566510674424102922",
+  "836677770373103636",
+  "1331647713149714513"
 ];
+
 const GUILD_ID = "719294957856227399";
 const VOICE_CHANNEL_ID = "1298632389349740625";
-const ROLE_ID = "1450881076359729152"; // rôle soutien
+const ROLE_ID = "1450881076359729152";
 const KEYWORDS = ["discord.gg/galaxrp", "galaxrp"];
 const PREFIX = "!glx";
 
 let autoRoleEnabled = true;
-let autoScanInterval = 10 * 60 * 1000;
+let autoScanIntervalMinutes = 10;
+let autoScanInterval = autoScanIntervalMinutes * 60 * 1000;
 let lastStatuses = new Map();
+let intervalHandler = null;
 
 // ================= CLIENT =================
 const client = new Client({
@@ -49,7 +53,8 @@ async function connectToVoice() {
   if (!autoJoinEnabled) return;
   const guild = await client.guilds.fetch(GUILD_ID);
   const channel = await guild.channels.fetch(VOICE_CHANNEL_ID);
-  if (!channel || channel.type !== 2) return;
+
+  if (!channel || channel.type !== ChannelType.GuildVoice) return;
 
   connection = joinVoiceChannel({
     channelId: channel.id,
@@ -73,7 +78,6 @@ async function checkMember(member) {
 
   try {
     if (!member.presence) return;
-
     const customStatus = member.presence.activities.find(a => a.type === ActivityType.Custom);
     if (!customStatus || !customStatus.state) return;
 
@@ -92,6 +96,7 @@ async function checkMember(member) {
       await member.roles.remove(ROLE_ID);
       console.log(`➖ Retrait du rôle → ${member.user.tag}`);
     }
+
   } catch (err) {
     console.error("Erreur AutoRole:", err);
   }
@@ -123,21 +128,26 @@ async function fullScan() {
   return count;
 }
 
-// intervalle auto
-setInterval(() => {
-  if (autoRoleEnabled) fullScan();
-}, autoScanInterval);
+function startInterval() {
+  if (intervalHandler) clearInterval(intervalHandler);
+
+  intervalHandler = setInterval(() => {
+    if (autoRoleEnabled) fullScan();
+  }, autoScanInterval);
+}
 
 // ================= COMMANDES =================
 client.on("messageCreate", async message => {
   if (message.author.bot) return;
-  if (message.author.id !== AUTHORIZED_ID) return;
+
+  // FIX ✔️ Utilisation du tableau AUTHORIZED_IDS
+  if (!AUTHORIZED_IDS.includes(message.author.id)) return;
+
   if (!message.content.startsWith(PREFIX)) return;
 
   const args = message.content.slice(PREFIX.length).trim().split(" ");
   const cmd = args.shift()?.toLowerCase();
 
-  // HELP  
   if (cmd === "help") {
     return message.reply(
       "**📘 Commandes disponibles :**\n" +
@@ -155,13 +165,11 @@ client.on("messageCreate", async message => {
     );
   }
 
-  // scan manuel
   if (cmd === "scan") {
     const n = await fullScan();
     return message.reply(`🔍 Scan terminé : **${n} membres** analysés.`);
   }
 
-  // force le rôle
   if (cmd === "forcerole") {
     const user = message.mentions.members.first();
     if (!user) return message.reply("❌ Mentionne quelqu’un.");
@@ -169,7 +177,6 @@ client.on("messageCreate", async message => {
     return message.reply(`➕ Rôle ajouté à **${user.user.tag}**`);
   }
 
-  // retire le rôle
   if (cmd === "roleoff") {
     const user = message.mentions.members.first();
     if (!user) return message.reply("❌ Mentionne quelqu’un.");
@@ -177,7 +184,6 @@ client.on("messageCreate", async message => {
     return message.reply(`➖ Rôle retiré à **${user.user.tag}**`);
   }
 
-  // dernier statut
   if (cmd === "laststatus") {
     const user = message.mentions.members.first();
     if (!user) return message.reply("❌ Mentionne quelqu’un.");
@@ -185,24 +191,25 @@ client.on("messageCreate", async message => {
     return message.reply(`📝 Dernier statut de **${user.user.tag}** :\n\`${st ?? "Aucun"}\``);
   }
 
-  // stats
   if (cmd === "stats") {
     return message.reply(
       `📊 **Stats bot :**\n` +
       `AutoRole : ${autoRoleEnabled ? "🟢 ON" : "🔴 OFF"}\n` +
-      `Intervalle scan : ${(autoScanInterval / 60000)} min`
+      `Intervalle scan : ${autoScanIntervalMinutes} min`
     );
   }
 
-  // changer intervalle
   if (cmd === "scaninterval") {
     const min = parseInt(args[0]);
     if (isNaN(min) || min < 1) return message.reply("❌ Mets un nombre en minutes.");
+
+    autoScanIntervalMinutes = min;
     autoScanInterval = min * 60000;
+    startInterval();
+
     return message.reply(`⏱️ Nouvel intervalle : **${min} min**`);
   }
 
-  // teststatus
   if (cmd === "teststatus") {
     const user = message.mentions.members.first();
     if (!user) return message.reply("❌ Mentionne quelqu’un.");
@@ -212,13 +219,11 @@ client.on("messageCreate", async message => {
     return message.reply(`🧪 Statut simulé : \`${fake}\``);
   }
 
-  // autoRoleOff
   if (cmd === "autoroleoff") {
     autoRoleEnabled = false;
     return message.reply("⛔ AutoRole désactivé.");
   }
 
-  // musique ON
   if (cmd === "mus2") {
     autoJoinEnabled = true;
     await connectToVoice();
@@ -226,7 +231,6 @@ client.on("messageCreate", async message => {
     return message.reply("🎵 Musique lancée.");
   }
 
-  // musique STOP
   if (cmd === "mus2st") {
     autoJoinEnabled = false;
     player.stop();
@@ -240,8 +244,8 @@ client.once("ready", async () => {
   console.log(`✅ Bot connecté : ${client.user.tag}`);
   console.log("🔍 Scan initial...");
   await fullScan();
+  startInterval();
   console.log("✅ Ready.");
 });
 
 client.login(process.env.TOKEN);
-
