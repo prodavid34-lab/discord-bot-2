@@ -13,7 +13,11 @@ const {
 const path = require("path");
 
 // ================= CONFIG =================
-const AUTHORIZED_ID = "566510674424102922";
+const AUTHORIZED_IDS = [
+  "566510674424102922", // ton ID actuel
+  "836677770373103636", //TEN
+  "1331647713149714513" // Antoine
+];
 const GUILD_ID = "719294957856227399";
 const VOICE_CHANNEL_ID = "1298632389349740625";
 const ROLE_ID = "1450881076359729152"; // rôle soutien
@@ -240,3 +244,4 @@ client.once("ready", async () => {
 });
 
 client.login(process.env.TOKEN);
+
