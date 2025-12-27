@@ -249,3 +249,4 @@ client.once("ready", async () => {
 });
 
 client.login(process.env.TOKEN);
+
