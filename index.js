@@ -2,9 +2,10 @@ require("dotenv").config();
 const {
   Client,
   GatewayIntentBits,
-  Routes,
-  SlashCommandBuilder,
   ActivityType,
+  SlashCommandBuilder,
+  REST,
+  Routes
 } = require("discord.js");
 
 const {
@@ -32,25 +33,27 @@ const KEYWORDS = [
   "galaxrp"
 ];
 
-// =============== CLIENT ====================
+// ================= CLIENT =================
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildPresences,
-    GatewayIntentBits.GuildVoiceStates,
-  ],
+    GatewayIntentBits.GuildVoiceStates
+  ]
 });
 
-let autoJoinEnabled = false;
-let connection = null;
 const player = createAudioPlayer();
+let connection = null;
 
-// =====================================================================
-// 🔊 VOCAL 
-// =====================================================================
+let autoJoin = false;
+let forcedRoles = new Set(); // pour roleon/roleoff
+
+// ==================================================
+// 🔊 VOCAL
+// ==================================================
 async function connectToVoice() {
-  if (!autoJoinEnabled) return;
+  if (!autoJoin) return;
 
   const guild = await client.guilds.fetch(GUILD_ID);
   const channel = await guild.channels.fetch(VOICE_CHANNEL_ID);
@@ -60,130 +63,208 @@ async function connectToVoice() {
     guildId: guild.id,
     adapterCreator: guild.voiceAdapterCreator,
     selfDeaf: true,
-    selfMute: false,
+    selfMute: false
   });
 
   connection.subscribe(player);
 }
 
-// =====================================================================
-// 🟦 AUTO-ROLE — LOGIQUE PRINCIPALE
-// =====================================================================
-async function checkMember(member, logsArray = null) {
-  if (!member.presence) return;
+player.on(AudioPlayerStatus.Idle, () => {
+  if (!autoJoin) return;
+  player.play(createAudioResource(path.join(__dirname, "son.mp3")));
+});
 
-  const status = member.presence.activities.find(a => a.type === ActivityType.Custom);
-  const text = status?.state?.toLowerCase() || "";
-  const hasKeyword = KEYWORDS.some(k => text.includes(k));
-  const hasRole = member.roles.cache.has(ROLE_ID);
+// ==================================================
+// 🟦 AUTO ROLE SYSTEM
+// ==================================================
+async function checkMember(member) {
+  try {
+    if (!member.presence) return;
+    if (forcedRoles.has(member.id)) return;
 
-  if (hasKeyword && !hasRole) {
-    await member.roles.add(ROLE_ID);
-    if (logsArray) logsArray.push(`🟩 Ajout → ${member.user.tag}`);
-  }
+    const customStatus = member.presence.activities.find(a => a.type === ActivityType.Custom);
 
-  if (!hasKeyword && hasRole) {
-    await member.roles.remove(ROLE_ID);
-    if (logsArray) logsArray.push(`🟥 Retrait → ${member.user.tag}`);
+    const state = customStatus?.state?.toLowerCase() || "";
+    const hasKeyword = KEYWORDS.some(k => state.includes(k));
+    const hasRole = member.roles.cache.has(ROLE_ID);
+
+    if (hasKeyword && !hasRole) {
+      await member.roles.add(ROLE_ID);
+      return `🟩 Ajout : ${member.user.tag}`;
+    }
+
+    if (!hasKeyword && hasRole) {
+      await member.roles.remove(ROLE_ID);
+      return `🟥 Retrait : ${member.user.tag}`;
+    }
+
+    return null;
+  } catch (_) {
+    return null;
   }
 }
 
-// =====================================================================
-// 🔧 COMMANDES INTERACTIONS
-// =====================================================================
+async function manualScan(guild) {
+  const members = await guild.members.fetch({ withPresences: true });
+
+  const changes = [];
+  for (const member of members.values()) {
+    const c = await checkMember(member);
+    if (c) changes.push(c);
+  }
+  return changes;
+}
+
+// ==================================================
+// 🟪 SLASH COMMANDS
+// ==================================================
+const commands = [
+  new SlashCommandBuilder()
+    .setName("glx")
+    .setDescription("Commandes GalaxRP")
+    .addSubcommand(sub =>
+      sub.setName("help").setDescription("Liste des commandes")
+    )
+    .addSubcommand(sub =>
+      sub.setName("stats").setDescription("Voir le nombre de membres avec le rôle")
+    )
+    .addSubcommand(sub =>
+      sub.setName("scan").setDescription("Scan manuel + liste des changements")
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName("roleon")
+        .setDescription("Force l’ajout du rôle soutien à un membre")
+        .addUserOption(o =>
+          o.setName("membre").setDescription("Le membre à modifier").setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName("roleoff")
+        .setDescription("Force le retrait du rôle soutien à un membre")
+        .addUserOption(o =>
+          o.setName("membre").setDescription("Le membre à modifier").setRequired(true)
+        )
+    )
+    .addSubcommand(sub =>
+      sub.setName("play").setDescription("Lancer la musique en boucle")
+    )
+    .addSubcommand(sub =>
+      sub.setName("stop").setDescription("Arrêter la musique")
+    )
+].map(c => c.toJSON());
+
+// ===== DEPLOY COMMANDS =====
+const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
+
+(async () => {
+  try {
+    await rest.put(
+      Routes.applicationGuildCommands(process.env.CLIENT_ID, GUILD_ID),
+      { body: commands }
+    );
+    console.log("✔️ Commands registered");
+  } catch (e) {
+    console.error(e);
+  }
+})();
+
+// ==================================================
+// 🔵 COMMAND HANDLER
+// ==================================================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
   if (!AUTHORIZED_IDS.includes(interaction.user.id))
-    return interaction.reply({ content: "⛔ Tu n’es pas autorisé.", ephemeral: true });
+    return interaction.reply({ content: "⛔ Non autorisé.", ephemeral: true });
 
-  const sub = interaction.options.getSubcommand(false);
+  const guild = await client.guilds.fetch(GUILD_ID);
 
-  // ---------------------- /glx scan ----------------------
-  if (interaction.commandName === "glx" && sub === "scan") {
-    const guild = await client.guilds.fetch(GUILD_ID);
-    const members = await guild.members.fetch({ withPresences: true });
-
-    const logs = [];
-    for (const m of members.values()) {
-      await checkMember(m, logs);
-    }
-
-    if (logs.length === 0)
-      return interaction.reply("✔️ Scan terminé. Aucun changement.");
-
-    return interaction.reply("🔍 **Scan terminé :**\n" + logs.join("\n"));
+  // --- HELP ---
+  if (interaction.options.getSubcommand() === "help") {
+    return interaction.reply({
+      ephemeral: true,
+      content:
+        "**/glx help** – Liste des commandes\n" +
+        "**/glx stats** – Combien ont le rôle soutien\n" +
+        "**/glx scan** – Scan manuel + changements\n" +
+        "**/glx roleon** – Force rôle ON\n" +
+        "**/glx roleoff** – Force rôle OFF\n" +
+        "**/glx play** – Lance la musique\n" +
+        "**/glx stop** – Stop la musique"
+    });
   }
 
-  // ---------------------- /glx stats ----------------------
-  if (interaction.commandName === "glx" && sub === "stats") {
-    const guild = await client.guilds.fetch(GUILD_ID);
+  // --- STATS ---
+  if (interaction.options.getSubcommand() === "stats") {
     const members = await guild.members.fetch();
     const count = members.filter(m => m.roles.cache.has(ROLE_ID)).size;
 
-    return interaction.reply(`📊 **Statistiques :**\n👥 ${count} membres ont le rôle soutien.`);
+    return interaction.reply({
+      ephemeral: true,
+      content: `📊 **${count}** membres possèdent le rôle soutien`
+    });
   }
 
-  // ---------------------- /glx roleon ----------------------
-  if (interaction.commandName === "glx" && sub === "roleon") {
-    const member = interaction.options.getMember("user");
-    if (!member) return interaction.reply("❌ Membre invalide.");
+  // --- SCAN ---
+  if (interaction.options.getSubcommand() === "scan") {
+    const changes = await manualScan(guild);
+    if (changes.length === 0)
+      return interaction.reply({ ephemeral: true, content: "Aucun changement." });
 
-    await member.roles.add(ROLE_ID);
-    return interaction.reply(`🟩 Rôle **soutien** ajouté à **${member.user.tag}**`);
+    return interaction.reply({
+      ephemeral: true,
+      content: "📥 **Changements détectés :**\n" + changes.join("\n")
+    });
   }
 
-  // ---------------------- /glx roleoff ----------------------
-  if (interaction.commandName === "glx" && sub === "roleoff") {
-    const member = interaction.options.getMember("user");
-    if (!member) return interaction.reply("❌ Membre invalide.");
+  // --- ROLEON ---
+  if (interaction.options.getSubcommand() === "roleon") {
+    const member = interaction.options.getUser("membre");
+    forcedRoles.add(member.id);
 
-    await member.roles.remove(ROLE_ID);
-    return interaction.reply(`🟥 Rôle **soutien** retiré à **${member.user.tag}**`);
+    const guildMember = await guild.members.fetch(member.id);
+    await guildMember.roles.add(ROLE_ID);
+
+    return interaction.reply({
+      ephemeral: true,
+      content: `🟩 Rôle ajouté à **${member.tag}** (forcé)`
+    });
   }
 
-  // ---------------------- /glx play ----------------------
-  if (interaction.commandName === "glx" && sub === "play") {
-    autoJoinEnabled = true;
+  // --- ROLEOFF ---
+  if (interaction.options.getSubcommand() === "roleoff") {
+    const member = interaction.options.getUser("membre");
+    forcedRoles.add(member.id);
+
+    const guildMember = await guild.members.fetch(member.id);
+    await guildMember.roles.remove(ROLE_ID);
+
+    return interaction.reply({
+      ephemeral: true,
+      content: `🟥 Rôle retiré à **${member.tag}** (forcé)`
+    });
+  }
+
+  // --- PLAY ---
+  if (interaction.options.getSubcommand() === "play") {
+    autoJoin = true;
     await connectToVoice();
     player.play(createAudioResource(path.join(__dirname, "son.mp3")));
-    return interaction.reply("🎵 Musique lancée !");
+
+    return interaction.reply({ ephemeral: true, content: "🎵 Musique lancée." });
   }
 
-  // ---------------------- /glx stop ----------------------
-  if (interaction.commandName === "glx" && sub === "stop") {
-    autoJoinEnabled = false;
+  // --- STOP ---
+  if (interaction.options.getSubcommand() === "stop") {
+    autoJoin = false;
     player.stop();
     if (connection) connection.destroy();
-    return interaction.reply("⛔ Musique arrêtée !");
-  }
 
-  // ---------------------- /glx help ----------------------
-  if (interaction.commandName === "glx" && sub === "help") {
-    return interaction.reply(
-      `📘 **Liste des commandes**\n
-🔹 /glx scan → Scan manuel + montre les changements  
-🔹 /glx stats → Nombre de membres avec le rôle  
-🔹 /glx roleon @user → Force l'ajout du rôle  
-🔹 /glx roleoff @user → Force le retrait du rôle  
-🔹 /glx play → Lance la musique en boucle  
-🔹 /glx stop → Stop la musique  
-`
-    );
+    return interaction.reply({ ephemeral: true, content: "⛔ Musique stoppée." });
   }
 });
 
-// =====================================================================
-// 🔁 Boucle audio
-// =====================================================================
-player.on(AudioPlayerStatus.Idle, () => {
-  if (!autoJoinEnabled) return;
-  player.play(createAudioResource(path.join(__dirname, "son.mp3")));
-});
-
-// =====================================================================
-client.once("ready", () => {
-  console.log(`🚀 Connecté en tant que ${client.user.tag}`);
-});
-
+client.once("ready", () => console.log("🚀 Bot prêt"));
 client.login(process.env.TOKEN);
