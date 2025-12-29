@@ -177,13 +177,22 @@ client.on("interactionCreate", async interaction => {
     );
   }
 
-  // STATS
-  if (sub === "stats") {
-    const members = await guild.members.fetch();
-    const count = members.filter(m => m.roles.cache.has(ROLE_ID)).size;
-    return interaction.editReply(`📊 **${count}** membres ont le rôle soutien.`);
-  }
+  // --- STATS ---
+if (interaction.options.getSubcommand() === "stats") {
 
+  await interaction.reply({
+    ephemeral: true,
+    content: "⏳ Chargement..."
+  });
+
+  const members = await guild.members.fetch();
+  const count = members.filter(m => m.roles.cache.has(ROLE_ID)).size;
+
+  return interaction.editReply({
+    content: `📊 **${count}** membres possèdent le rôle soutien`
+  });
+}
+  
   // SCAN
   if (sub === "scan") {
     const logs = await manualScan(guild);
@@ -244,3 +253,4 @@ setInterval(async () => {
 // READY
 client.once("ready", () => console.log("🚀 Bot prêt"));
 client.login(process.env.TOKEN);
+
