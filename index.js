@@ -7,31 +7,26 @@ const {
   REST,
   Routes
 } = require("discord.js");
-
 const {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus
 } = require("@discordjs/voice");
-
 const path = require("path");
 
 // ================= CONFIG =================
 const AUTHORIZED_IDS = [
-  "566510674424102922", // toi
-  "836677770373103636", // Ten
-  "1331647713149714513" // Antoine
+  "566510674424102922",
+  "836677770373103636",
+  "1331647713149714513"
 ];
 
 const GUILD_ID = "719294957856227399";
 const VOICE_CHANNEL_ID = "1298632389349740625";
 const ROLE_ID = "1450881076359729152";
 
-const KEYWORDS = [
-  "discord.gg/galaxrp",
-  "galaxrp"
-];
+const KEYWORDS = ["discord.gg/galaxrp", "galaxrp"];
 
 // ================= CLIENT =================
 const client = new Client({
@@ -45,8 +40,8 @@ const client = new Client({
 
 const player = createAudioPlayer();
 let connection = null;
-
 let autoJoin = false;
+
 let forcedRoles = new Set(); // pour roleon/roleoff
 
 // ==================================================
@@ -62,8 +57,7 @@ async function connectToVoice() {
     channelId: channel.id,
     guildId: guild.id,
     adapterCreator: guild.voiceAdapterCreator,
-    selfDeaf: true,
-    selfMute: false
+    selfDeaf: true
   });
 
   connection.subscribe(player);
@@ -82,9 +76,9 @@ async function checkMember(member) {
     if (!member.presence) return;
     if (forcedRoles.has(member.id)) return;
 
-    const customStatus = member.presence.activities.find(a => a.type === ActivityType.Custom);
+    const custom = member.presence.activities.find(a => a.type === ActivityType.Custom);
+    const state = custom?.state?.toLowerCase() || "";
 
-    const state = customStatus?.state?.toLowerCase() || "";
     const hasKeyword = KEYWORDS.some(k => state.includes(k));
     const hasRole = member.roles.cache.has(ROLE_ID);
 
@@ -99,172 +93,154 @@ async function checkMember(member) {
     }
 
     return null;
-  } catch (_) {
+  } catch {
     return null;
   }
 }
 
 async function manualScan(guild) {
   const members = await guild.members.fetch({ withPresences: true });
+  const logs = [];
 
-  const changes = [];
-  for (const member of members.values()) {
-    const c = await checkMember(member);
-    if (c) changes.push(c);
+  for (const mem of members.values()) {
+    const r = await checkMember(mem);
+    if (r) logs.push(r);
   }
-  return changes;
+  return logs;
 }
 
 // ==================================================
-// 🟪 SLASH COMMANDS
+// 🔧 SLASH COMMANDS
 // ==================================================
 const commands = [
   new SlashCommandBuilder()
     .setName("glx")
     .setDescription("Commandes GalaxRP")
-    .addSubcommand(sub =>
-      sub.setName("help").setDescription("Liste des commandes")
-    )
-    .addSubcommand(sub =>
-      sub.setName("stats").setDescription("Voir le nombre de membres avec le rôle")
-    )
-    .addSubcommand(sub =>
-      sub.setName("scan").setDescription("Scan manuel + liste des changements")
-    )
-    .addSubcommand(sub =>
-      sub
+    .addSubcommand(s => s.setName("help").setDescription("Aide"))
+    .addSubcommand(s => s.setName("stats").setDescription("Nombre de soutiens"))
+    .addSubcommand(s => s.setName("scan").setDescription("Scan manuel + changements"))
+    .addSubcommand(s =>
+      s
         .setName("roleon")
-        .setDescription("Force l’ajout du rôle soutien à un membre")
+        .setDescription("Forcer l’ajout du rôle")
         .addUserOption(o =>
-          o.setName("membre").setDescription("Le membre à modifier").setRequired(true)
+          o.setName("membre").setDescription("Membre").setRequired(true)
         )
     )
-    .addSubcommand(sub =>
-      sub
+    .addSubcommand(s =>
+      s
         .setName("roleoff")
-        .setDescription("Force le retrait du rôle soutien à un membre")
+        .setDescription("Forcer retrait du rôle")
         .addUserOption(o =>
-          o.setName("membre").setDescription("Le membre à modifier").setRequired(true)
+          o.setName("membre").setDescription("Membre").setRequired(true)
         )
     )
-    .addSubcommand(sub =>
-      sub.setName("play").setDescription("Lancer la musique en boucle")
-    )
-    .addSubcommand(sub =>
-      sub.setName("stop").setDescription("Arrêter la musique")
-    )
+    .addSubcommand(s => s.setName("play").setDescription("Lancer la musique"))
+    .addSubcommand(s => s.setName("stop").setDescription("Stopper la musique"))
 ].map(c => c.toJSON());
 
-// ===== DEPLOY COMMANDS =====
+// DEPLOY
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
-
 (async () => {
-  try {
-    await rest.put(
-      Routes.applicationGuildCommands(process.env.CLIENT_ID, GUILD_ID),
-      { body: commands }
-    );
-    console.log("✔️ Commands registered");
-  } catch (e) {
-    console.error(e);
-  }
+  await rest.put(
+    Routes.applicationGuildCommands(process.env.CLIENT_ID, GUILD_ID),
+    { body: commands }
+  );
+  console.log("✔️ Commandes mises à jour");
 })();
 
 // ==================================================
-// 🔵 COMMAND HANDLER
+// 🟣 COMMAND HANDLER
 // ==================================================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
+  // On répond tout de suite pour éviter les interactions expirées
+  await interaction.deferReply({ ephemeral: true });
+
   if (!AUTHORIZED_IDS.includes(interaction.user.id))
-    return interaction.reply({ content: "⛔ Non autorisé.", ephemeral: true });
+    return interaction.editReply("⛔ Non autorisé.");
 
   const guild = await client.guilds.fetch(GUILD_ID);
+  const sub = interaction.options.getSubcommand();
 
-  // --- HELP ---
-  if (interaction.options.getSubcommand() === "help") {
-    return interaction.reply({
-      ephemeral: true,
-      content:
-        "**/glx help** – Liste des commandes\n" +
-        "**/glx stats** – Combien ont le rôle soutien\n" +
-        "**/glx scan** – Scan manuel + changements\n" +
-        "**/glx roleon** – Force rôle ON\n" +
-        "**/glx roleoff** – Force rôle OFF\n" +
-        "**/glx play** – Lance la musique\n" +
-        "**/glx stop** – Stop la musique"
-    });
+  // HELP
+  if (sub === "help") {
+    return interaction.editReply(
+      "**/glx help** – Liste des commandes\n" +
+      "**/glx stats** – Nombre de soutiens\n" +
+      "**/glx scan** – Scan manuel\n" +
+      "**/glx roleon** – Force rôle ON\n" +
+      "**/glx roleoff** – Force rôle OFF\n" +
+      "**/glx play** – Lancer musique\n" +
+      "**/glx stop** – Stop musique"
+    );
   }
 
-  // --- STATS ---
-  if (interaction.options.getSubcommand() === "stats") {
+  // STATS
+  if (sub === "stats") {
     const members = await guild.members.fetch();
     const count = members.filter(m => m.roles.cache.has(ROLE_ID)).size;
-
-    return interaction.reply({
-      ephemeral: true,
-      content: `📊 **${count}** membres possèdent le rôle soutien`
-    });
+    return interaction.editReply(`📊 **${count}** membres ont le rôle soutien.`);
   }
 
-  // --- SCAN ---
-  if (interaction.options.getSubcommand() === "scan") {
-    const changes = await manualScan(guild);
-    if (changes.length === 0)
-      return interaction.reply({ ephemeral: true, content: "Aucun changement." });
+  // SCAN
+  if (sub === "scan") {
+    const logs = await manualScan(guild);
+    if (logs.length === 0)
+      return interaction.editReply("Aucun changement.");
 
-    return interaction.reply({
-      ephemeral: true,
-      content: "📥 **Changements détectés :**\n" + changes.join("\n")
-    });
+    return interaction.editReply("📥 **Changements :**\n" + logs.join("\n"));
   }
 
-  // --- ROLEON ---
-  if (interaction.options.getSubcommand() === "roleon") {
-    const member = interaction.options.getUser("membre");
-    forcedRoles.add(member.id);
+  // ROLEON
+  if (sub === "roleon") {
+    const m = interaction.options.getUser("membre");
+    forcedRoles.add(m.id);
 
-    const guildMember = await guild.members.fetch(member.id);
-    await guildMember.roles.add(ROLE_ID);
+    const gm = await guild.members.fetch(m.id);
+    await gm.roles.add(ROLE_ID);
 
-    return interaction.reply({
-      ephemeral: true,
-      content: `🟩 Rôle ajouté à **${member.tag}** (forcé)`
-    });
+    return interaction.editReply(`🟩 Rôle ajouté à **${m.tag}** (forcé).`);
   }
 
-  // --- ROLEOFF ---
-  if (interaction.options.getSubcommand() === "roleoff") {
-    const member = interaction.options.getUser("membre");
-    forcedRoles.add(member.id);
+  // ROLEOFF
+  if (sub === "roleoff") {
+    const m = interaction.options.getUser("membre");
+    forcedRoles.add(m.id);
 
-    const guildMember = await guild.members.fetch(member.id);
-    await guildMember.roles.remove(ROLE_ID);
+    const gm = await guild.members.fetch(m.id);
+    await gm.roles.remove(ROLE_ID);
 
-    return interaction.reply({
-      ephemeral: true,
-      content: `🟥 Rôle retiré à **${member.tag}** (forcé)`
-    });
+    return interaction.editReply(`🟥 Rôle retiré à **${m.tag}** (forcé).`);
   }
 
-  // --- PLAY ---
-  if (interaction.options.getSubcommand() === "play") {
+  // PLAY
+  if (sub === "play") {
     autoJoin = true;
     await connectToVoice();
     player.play(createAudioResource(path.join(__dirname, "son.mp3")));
 
-    return interaction.reply({ ephemeral: true, content: "🎵 Musique lancée." });
+    return interaction.editReply("🎵 Musique lancée.");
   }
 
-  // --- STOP ---
-  if (interaction.options.getSubcommand() === "stop") {
+  // STOP
+  if (sub === "stop") {
     autoJoin = false;
     player.stop();
     if (connection) connection.destroy();
-
-    return interaction.reply({ ephemeral: true, content: "⛔ Musique stoppée." });
+    return interaction.editReply("⛔ Musique stoppée.");
   }
 });
 
+// ==================================================
+// 🔄 SCAN AUTO
+// ==================================================
+setInterval(async () => {
+  const guild = await client.guilds.fetch(GUILD_ID);
+  await manualScan(guild);
+}, 5 * 60 * 1000); // toutes les 5 minutes
+
+// READY
 client.once("ready", () => console.log("🚀 Bot prêt"));
 client.login(process.env.TOKEN);
