@@ -7,12 +7,14 @@ const {
   REST,
   Routes
 } = require("discord.js");
+
 const {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus
 } = require("@discordjs/voice");
+
 const path = require("path");
 
 // ================= CONFIG =================
@@ -41,26 +43,30 @@ const client = new Client({
 const player = createAudioPlayer();
 let connection = null;
 let autoJoin = false;
+let forcedRoles = new Set();
 
-let forcedRoles = new Set(); // pour roleon/roleoff
 
 // ==================================================
-// 🔊 VOCAL
+// 🔊 VOCAL FIX
 // ==================================================
 async function connectToVoice() {
   if (!autoJoin) return;
 
-  const guild = await client.guilds.fetch(GUILD_ID);
-  const channel = await guild.channels.fetch(VOICE_CHANNEL_ID);
+  try {
+    const guild = await client.guilds.fetch(GUILD_ID);
+    const channel = await guild.channels.fetch(VOICE_CHANNEL_ID);
 
-  connection = joinVoiceChannel({
-    channelId: channel.id,
-    guildId: guild.id,
-    adapterCreator: guild.voiceAdapterCreator,
-    selfDeaf: true
-  });
+    connection = joinVoiceChannel({
+      channelId: channel.id,
+      guildId: guild.id,
+      adapterCreator: guild.voiceAdapterCreator,
+      selfDeaf: true
+    });
 
-  connection.subscribe(player);
+    connection.subscribe(player);
+  } catch (err) {
+    console.error("Erreur connexion vocale :", err);
+  }
 }
 
 player.on(AudioPlayerStatus.Idle, () => {
@@ -68,8 +74,9 @@ player.on(AudioPlayerStatus.Idle, () => {
   player.play(createAudioResource(path.join(__dirname, "son.mp3")));
 });
 
+
 // ==================================================
-// 🟦 AUTO ROLE SYSTEM
+// 🟦 AUTO ROLE SYSTEM FIXÉ (pas de crash)
 // ==================================================
 async function checkMember(member) {
   try {
@@ -78,7 +85,6 @@ async function checkMember(member) {
 
     const custom = member.presence.activities.find(a => a.type === ActivityType.Custom);
     const state = custom?.state?.toLowerCase() || "";
-
     const hasKeyword = KEYWORDS.some(k => state.includes(k));
     const hasRole = member.roles.cache.has(ROLE_ID);
 
@@ -93,21 +99,24 @@ async function checkMember(member) {
     }
 
     return null;
+
   } catch {
     return null;
   }
 }
 
+// Scan sans fetch ALL (anti-crash)
 async function manualScan(guild) {
-  const members = await guild.members.fetch({ withPresences: true });
   const logs = [];
 
-  for (const mem of members.values()) {
-    const r = await checkMember(mem);
+  guild.members.cache.forEach(async member => {
+    const r = await checkMember(member);
     if (r) logs.push(r);
-  }
+  });
+
   return logs;
 }
+
 
 // ==================================================
 // 🔧 SLASH COMMANDS
@@ -123,17 +132,13 @@ const commands = [
       s
         .setName("roleon")
         .setDescription("Forcer l’ajout du rôle")
-        .addUserOption(o =>
-          o.setName("membre").setDescription("Membre").setRequired(true)
-        )
+        .addUserOption(o => o.setName("membre").setDescription("Membre").setRequired(true))
     )
     .addSubcommand(s =>
       s
         .setName("roleoff")
         .setDescription("Forcer retrait du rôle")
-        .addUserOption(o =>
-          o.setName("membre").setDescription("Membre").setRequired(true)
-        )
+        .addUserOption(o => o.setName("membre").setDescription("Membre").setRequired(true))
     )
     .addSubcommand(s => s.setName("play").setDescription("Lancer la musique"))
     .addSubcommand(s => s.setName("stop").setDescription("Stopper la musique"))
@@ -149,14 +154,14 @@ const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
   console.log("✔️ Commandes mises à jour");
 })();
 
+
 // ==================================================
-// 🟣 COMMAND HANDLER
+// 🟣 COMMAND HANDLER FIX
 // ==================================================
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  // On répond tout de suite pour éviter les interactions expirées
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: 64 }); // EPHEMERAL FIX
 
   if (!AUTHORIZED_IDS.includes(interaction.user.id))
     return interaction.editReply("⛔ Non autorisé.");
@@ -177,28 +182,17 @@ client.on("interactionCreate", async interaction => {
     );
   }
 
-  // --- STATS ---
-if (interaction.options.getSubcommand() === "stats") {
+  // STATS FIXÉES (aucun fetch all → aucun crash)
+  if (sub === "stats") {
+    const count = guild.members.cache.filter(m => m.roles.cache.has(ROLE_ID)).size;
+    return interaction.editReply(`📊 **${count}** membres possèdent le rôle soutien`);
+  }
 
-  await interaction.reply({
-    ephemeral: true,
-    content: "⏳ Chargement..."
-  });
-
-  const members = await guild.members.fetch();
-  const count = members.filter(m => m.roles.cache.has(ROLE_ID)).size;
-
-  return interaction.editReply({
-    content: `📊 **${count}** membres possèdent le rôle soutien`
-  });
-}
-  
   // SCAN
   if (sub === "scan") {
     const logs = await manualScan(guild);
     if (logs.length === 0)
       return interaction.editReply("Aucun changement.");
-
     return interaction.editReply("📥 **Changements :**\n" + logs.join("\n"));
   }
 
@@ -206,10 +200,8 @@ if (interaction.options.getSubcommand() === "stats") {
   if (sub === "roleon") {
     const m = interaction.options.getUser("membre");
     forcedRoles.add(m.id);
-
     const gm = await guild.members.fetch(m.id);
     await gm.roles.add(ROLE_ID);
-
     return interaction.editReply(`🟩 Rôle ajouté à **${m.tag}** (forcé).`);
   }
 
@@ -217,10 +209,8 @@ if (interaction.options.getSubcommand() === "stats") {
   if (sub === "roleoff") {
     const m = interaction.options.getUser("membre");
     forcedRoles.add(m.id);
-
     const gm = await guild.members.fetch(m.id);
     await gm.roles.remove(ROLE_ID);
-
     return interaction.editReply(`🟥 Rôle retiré à **${m.tag}** (forcé).`);
   }
 
@@ -229,7 +219,6 @@ if (interaction.options.getSubcommand() === "stats") {
     autoJoin = true;
     await connectToVoice();
     player.play(createAudioResource(path.join(__dirname, "son.mp3")));
-
     return interaction.editReply("🎵 Musique lancée.");
   }
 
@@ -242,15 +231,18 @@ if (interaction.options.getSubcommand() === "stats") {
   }
 });
 
+
 // ==================================================
-// 🔄 SCAN AUTO
+// 🔄 SCAN AUTO (fixé)
 // ==================================================
 setInterval(async () => {
-  const guild = await client.guilds.fetch(GUILD_ID);
+  const guild = client.guilds.cache.get(GUILD_ID);
+  if (!guild) return;
   await manualScan(guild);
-}, 5 * 60 * 1000); // toutes les 5 minutes
+}, 5 * 60 * 1000);
 
-// READY
-client.once("ready", () => console.log("🚀 Bot prêt"));
+
+// READY FIXÉ
+client.once("clientReady", () => console.log("🚀 Bot prêt"));
+
 client.login(process.env.TOKEN);
-
